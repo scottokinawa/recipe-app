@@ -69,6 +69,56 @@ function getSpeechRecognition() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
+// ── Tip helpers ────────────────────────────────────────────────
+
+const CATEGORY_STYLES = {
+  technique: {
+    highlight: 'border-b-2 border-dashed border-amber-400 text-amber-700 font-semibold',
+    badge: 'bg-amber-100 text-amber-700',
+    border: 'border-amber-200',
+    bg: 'bg-amber-50',
+    label: 'Technique',
+  },
+  doneness: {
+    highlight: 'border-b-2 border-dashed border-emerald-400 text-emerald-700 font-semibold',
+    badge: 'bg-emerald-100 text-emerald-700',
+    border: 'border-emerald-200',
+    bg: 'bg-emerald-50',
+    label: 'How to tell it\'s done',
+  },
+};
+
+function parseSegments(text, tips) {
+  if (!tips || !text) return [{ type: 'text', content: text ?? '' }];
+
+  const matches = [];
+  for (const phrase in tips) {
+    const idx = text.toLowerCase().indexOf(phrase.toLowerCase());
+    if (idx !== -1) {
+      matches.push({ start: idx, end: idx + phrase.length, phrase, tip: tips[phrase] });
+    }
+  }
+
+  if (matches.length === 0) return [{ type: 'text', content: text }];
+
+  matches.sort((a, b) => a.start - b.start);
+  const resolved = [matches[0]];
+  for (let i = 1; i < matches.length; i++) {
+    if (matches[i].start >= resolved[resolved.length - 1].end) resolved.push(matches[i]);
+  }
+
+  const segments = [];
+  let cursor = 0;
+  for (const m of resolved) {
+    if (m.start > cursor) segments.push({ type: 'text', content: text.slice(cursor, m.start) });
+    segments.push({ type: 'tip', content: text.slice(m.start, m.end), phrase: m.phrase, tip: m.tip });
+    cursor = m.end;
+  }
+  if (cursor < text.length) segments.push({ type: 'text', content: text.slice(cursor) });
+
+  return segments;
+}
+
 // ── Timer Button ───────────────────────────────────────────────
 
 function TimerButton({ timer, state, onToggle }) {
@@ -92,6 +142,106 @@ function TimerButton({ timer, state, onToggle }) {
         {done ? 'Done!' : running ? formatTime(timeLeft) : `${formatTime(timer.seconds)} — Start`}
       </span>
     </button>
+  );
+}
+
+// ── Tip Card ───────────────────────────────────────────────────
+
+function TipCard({ tip, onClose }) {
+  const styles = CATEGORY_STYLES[tip.category] ?? CATEGORY_STYLES.technique;
+  return (
+    <div className={`mt-3 rounded-xl border ${styles.border} ${styles.bg} px-4 py-3.5`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-2 ${styles.badge}`}>
+            {styles.label}
+          </span>
+          <p className="text-sm font-semibold text-stone-800 leading-snug">{tip.title}</p>
+          <p className="text-sm text-stone-600 leading-relaxed mt-1.5">{tip.body}</p>
+        </div>
+        <button
+          onClick={onClose}
+          className="shrink-0 mt-0.5 text-stone-400 hover:text-stone-600 transition-colors"
+          aria-label="Close tip"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Step Text with inline tips ─────────────────────────────────
+
+function StepText({ text, tips, large }) {
+  const [activeTipKey, setActiveTipKey] = useState(null);
+  const segments = parseSegments(text, tips);
+  const activeTip = activeTipKey ? tips?.[activeTipKey] : null;
+
+  return (
+    <div>
+      <p
+        className={large ? 'text-stone-900 font-medium leading-relaxed' : 'text-sm text-stone-700 leading-relaxed'}
+        style={large ? { fontSize: 'clamp(1.2rem, 2.5vw, 2rem)' } : undefined}
+      >
+        {segments.map((seg, i) => {
+          if (seg.type === 'text') return <span key={i}>{seg.content}</span>;
+          const styles = CATEGORY_STYLES[seg.tip.category] ?? CATEGORY_STYLES.technique;
+          const isActive = activeTipKey === seg.phrase;
+          return (
+            <button
+              key={i}
+              onClick={() => setActiveTipKey(isActive ? null : seg.phrase)}
+              className={`inline pb-px cursor-pointer transition-opacity hover:opacity-70 ${styles.highlight} ${isActive ? 'opacity-60' : ''}`}
+            >
+              {seg.content}
+            </button>
+          );
+        })}
+      </p>
+
+      {activeTip && (
+        <TipCard tip={activeTip} onClose={() => setActiveTipKey(null)} />
+      )}
+    </div>
+  );
+}
+
+// ── Ingredient Row with substitutions ─────────────────────────
+
+function IngredientRow({ ing, baseServings, servings }) {
+  const [subOpen, setSubOpen] = useState(false);
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-baseline justify-between">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-stone-800">{ing.item}</span>
+          {ing.sub && (
+            <button
+              onClick={() => setSubOpen(o => !o)}
+              className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors ${
+                subOpen
+                  ? 'bg-amber-200 text-amber-800'
+                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+              }`}
+            >
+              sub
+            </button>
+          )}
+        </div>
+        <span className="text-sm font-medium text-stone-500 ml-4 shrink-0">
+          {scaleAmount(ing.amount, baseServings, servings)}
+        </span>
+      </div>
+      {subOpen && ing.sub && (
+        <p className="mt-2 text-xs text-stone-600 leading-relaxed bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+          {ing.sub}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -324,7 +474,7 @@ export default function RecipeDetail({ recipe }) {
           </div>
         )}
 
-        {/* Step content — centered, max-width so it reads well on any screen */}
+        {/* Step content */}
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="w-full max-w-2xl mx-auto px-6 pt-10 pb-6 flex flex-col gap-8 flex-1">
 
@@ -332,11 +482,7 @@ export default function RecipeDetail({ recipe }) {
               <p className="text-xs font-semibold tracking-widest text-rose-400 uppercase mb-4">
                 Step {currentStep + 1}
               </p>
-              {/* Fluid text: min 1.2rem, scales with viewport, max 2rem */}
-              <p className="text-stone-900 font-medium leading-relaxed"
-                style={{ fontSize: 'clamp(1.2rem, 2.5vw, 2rem)' }}>
-                {step}
-              </p>
+              <StepText text={step} tips={recipe.tips} large />
             </div>
 
             {/* Timers */}
@@ -443,12 +589,12 @@ export default function RecipeDetail({ recipe }) {
 
           <div className="bg-white rounded-2xl border border-stone-100 shadow-sm divide-y divide-stone-50">
             {recipe.ingredients.map((ing, i) => (
-              <div key={i} className="flex items-baseline justify-between px-4 py-3">
-                <span className="text-sm text-stone-800">{ing.item}</span>
-                <span className="text-sm font-medium text-stone-500 ml-4 shrink-0">
-                  {scaleAmount(ing.amount, baseServings, servings)}
-                </span>
-              </div>
+              <IngredientRow
+                key={i}
+                ing={ing}
+                baseServings={baseServings}
+                servings={servings}
+              />
             ))}
           </div>
         </section>
@@ -478,7 +624,7 @@ export default function RecipeDetail({ recipe }) {
                     {i + 1}
                   </div>
                   <div className="flex-1 pt-0.5">
-                    <p className="text-sm text-stone-700 leading-relaxed">{step}</p>
+                    <StepText text={step} tips={recipe.tips} />
                     {timers.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {timers.map(timer => (
