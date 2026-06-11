@@ -71,6 +71,31 @@ function getSpeechRecognition() {
 
 // ── Tip helpers ────────────────────────────────────────────────
 
+// ── Flavor role tags ───────────────────────────────────────────
+
+const ROLE_STYLES = {
+  UMAMI:   'bg-purple-100 text-purple-700',
+  SALTY:   'bg-blue-100 text-blue-700',
+  SWEET:   'bg-amber-100 text-amber-700',
+  AROMA:   'bg-teal-100 text-teal-700',
+  HEAT:    'bg-orange-100 text-orange-700',
+  COLOR:   'bg-emerald-100 text-emerald-700',
+  ACID:    'bg-lime-100 text-lime-700',
+  TEXTURE: 'bg-stone-100 text-stone-600',
+  DEPTH:   'bg-indigo-100 text-indigo-700',
+};
+
+function RoleTag({ role }) {
+  const cls = ROLE_STYLES[role] ?? 'bg-stone-100 text-stone-500';
+  return (
+    <span className={`inline-block text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded ${cls}`}>
+      {role}
+    </span>
+  );
+}
+
+// ── Tip category styles ────────────────────────────────────────
+
 const CATEGORY_STYLES = {
   technique: {
     highlight: 'border-b-2 border-dashed border-amber-400 text-amber-700 font-semibold',
@@ -216,23 +241,30 @@ function IngredientRow({ ing, baseServings, servings }) {
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-stone-800">{ing.item}</span>
-          {ing.sub && (
-            <button
-              onClick={() => setSubOpen(o => !o)}
-              className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors ${
-                subOpen
-                  ? 'bg-amber-200 text-amber-800'
-                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-              }`}
-            >
-              sub
-            </button>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1.5 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-stone-800">{ing.item}</span>
+            {ing.sub && (
+              <button
+                onClick={() => setSubOpen(o => !o)}
+                className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors ${
+                  subOpen
+                    ? 'bg-amber-200 text-amber-800'
+                    : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                }`}
+              >
+                sub
+              </button>
+            )}
+          </div>
+          {ing.roles?.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {ing.roles.map(role => <RoleTag key={role} role={role} />)}
+            </div>
           )}
         </div>
-        <span className="text-sm font-medium text-stone-500 ml-4 shrink-0">
+        <span className="text-sm font-medium text-stone-500 shrink-0 pt-0.5">
           {scaleAmount(ing.amount, baseServings, servings)}
         </span>
       </div>
