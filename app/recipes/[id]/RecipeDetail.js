@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ── Serving scaler helpers ─────────────────────────────────────
 
@@ -54,6 +54,21 @@ function formatTime(s) {
   return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : `${s}s`;
 }
 
+// ── Speech helpers ─────────────────────────────────────────────
+
+function speak(text) {
+  if (typeof window === 'undefined') return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.95;
+  window.speechSynthesis.speak(u);
+}
+
+function getSpeechRecognition() {
+  if (typeof window === 'undefined') return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
 // ── Timer Button ───────────────────────────────────────────────
 
 function TimerButton({ timer, state, onToggle }) {
@@ -96,6 +111,21 @@ function ChevronRight() {
   );
 }
 
+function MicIcon({ active }) {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      {active ? (
+        // mic with slash when muting, or filled mic when active
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4z" />
+      ) : (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M12 3a4 4 0 014 4v4a4 4 0 01-8 0V7a4 4 0 014-4zM19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4" />
+      )}
+    </svg>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────
 
 export default function RecipeDetail({ recipe }) {
@@ -104,6 +134,16 @@ export default function RecipeDetail({ recipe }) {
   const [cookingMode, setCookingMode] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [timerStates, setTimerStates] = useState({});
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [lastCommand, setLastCommand] = useState('');
+
+  const recognitionRef = useRef(null);
+  const voiceActiveRef = useRef(false);
+  const commandHandlerRef = useRef(null);
+  const commandToastRef = useRef(null);
+
+  const steps = recipe.steps ?? [];
+  const totalSteps = steps.length;
 
   // Single interval drives all active timers
   useEffect(() => {
@@ -130,23 +170,144 @@ export default function RecipeDetail({ recipe }) {
     });
   }
 
-  const steps = recipe.steps ?? [];
-  const totalSteps = steps.length;
+  function showToast(text) {
+    setLastCommand(text);
+    clearTimeout(commandToastRef.current);
+    commandToastRef.current = setTimeout(() => setLastCommand(''), 2500);
+  }
 
-  // ── Cooking mode overlay ───────────────────────────────────
+  // Keep command handler current with latest state (ref pattern avoids stale closures)
+  commandHandlerRef.current = useCallback((transcript) => {
+    const t = transcript.toLowerCase();
+
+    if (t.includes('next') || t.includes('forward')) {
+      setCurrentStep(s => {
+        const next = Math.min(totalSteps - 1, s + 1);
+        speak(steps[next]);
+        return next;
+      });
+      showToast('Next step');
+    } else if (t.includes('back') || t.includes('previous') || t.includes('repeat last')) {
+      setCurrentStep(s => {
+        const prev = Math.max(0, s - 1);
+        speak(steps[prev]);
+        return prev;
+      });
+      showToast('Previous step');
+    } else if (t.includes('repeat') || t.includes('again') || t.includes('say again')) {
+      setCurrentStep(s => { speak(steps[s]); return s; });
+      showToast('Repeating step');
+    } else if (t.includes('timer') || t.includes('start timer') || t.includes('begin timer')) {
+      setCurrentStep(s => {
+        const timers = extractTimers(steps[s], s);
+        if (timers.length > 0) {
+          const timer = timers[0];
+          setTimerStates(prev => {
+            const cur = prev[timer.id];
+            if (!cur || cur.done) return { ...prev, [timer.id]: { running: true, timeLeft: timer.seconds, done: false } };
+            return { ...prev, [timer.id]: { ...cur, running: !cur.running } };
+          });
+          speak(`Timer started for ${timer.label}`);
+          showToast(`Timer: ${timer.label}`);
+        } else {
+          speak('No timer on this step');
+          showToast('No timer here');
+        }
+        return s;
+      });
+    } else if (t.includes('stop timer') || t.includes('pause timer')) {
+      setCurrentStep(s => {
+        const timers = extractTimers(steps[s], s);
+        timers.forEach(timer => {
+          setTimerStates(prev => {
+            const cur = prev[timer.id];
+            if (cur?.running) return { ...prev, [timer.id]: { ...cur, running: false } };
+            return prev;
+          });
+        });
+        showToast('Timer paused');
+        return s;
+      });
+    } else if (t.includes('exit') || t.includes('stop cooking') || t.includes('quit')) {
+      setCookingMode(false);
+      setCurrentStep(0);
+      voiceActiveRef.current = false;
+      setVoiceActive(false);
+      recognitionRef.current?.abort();
+      window.speechSynthesis.cancel();
+      showToast('Exited cooking mode');
+    }
+  }, [steps, totalSteps]);
+
+  // Set up speech recognition once
+  useEffect(() => {
+    const SR = getSpeechRecognition();
+    if (!SR) return;
+
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (e) => {
+      const transcript = e.results[e.results.length - 1][0].transcript;
+      commandHandlerRef.current?.(transcript);
+    };
+
+    // Auto-restart if it stops while voice is still active
+    recognition.onend = () => {
+      if (voiceActiveRef.current) recognition.start();
+    };
+
+    recognition.onerror = (e) => {
+      if (e.error === 'not-allowed') {
+        voiceActiveRef.current = false;
+        setVoiceActive(false);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    return () => recognition.abort();
+  }, []);
+
+  function toggleVoice() {
+    const next = !voiceActive;
+    voiceActiveRef.current = next;
+    setVoiceActive(next);
+
+    if (next) {
+      recognitionRef.current?.start();
+      speak(`Voice control on. Say next, back, repeat, or start timer.`);
+    } else {
+      recognitionRef.current?.abort();
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  // ── Cooking mode overlay ─────────────────────────────────────
 
   if (cookingMode) {
     const step = steps[currentStep];
     const timers = extractTimers(step, currentStep);
     const progress = ((currentStep + 1) / totalSteps) * 100;
     const isLast = currentStep === totalSteps - 1;
+    const voiceSupported = !!getSpeechRecognition();
 
     return (
       <div className="fixed inset-0 z-50 bg-[#f9f7f4] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 bg-white border-b border-stone-200">
           <button
-            onClick={() => { setCookingMode(false); setCurrentStep(0); }}
+            onClick={() => {
+              setCookingMode(false);
+              setCurrentStep(0);
+              if (voiceActive) {
+                voiceActiveRef.current = false;
+                setVoiceActive(false);
+                recognitionRef.current?.abort();
+                window.speechSynthesis.cancel();
+              }
+            }}
             className="flex items-center gap-1 text-sm text-stone-500 hover:text-stone-900 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -154,10 +315,25 @@ export default function RecipeDetail({ recipe }) {
             </svg>
             Exit
           </button>
+
           <span className="text-sm font-semibold text-stone-700">
             Step {currentStep + 1} <span className="font-normal text-stone-400">of {totalSteps}</span>
           </span>
-          <span className="text-xs text-stone-400 max-w-[90px] truncate text-right">{recipe.title}</span>
+
+          {/* Voice toggle */}
+          {voiceSupported && (
+            <button
+              onClick={toggleVoice}
+              className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-all ${
+                voiceActive
+                  ? 'bg-rose-600 text-white animate-pulse'
+                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+              }`}
+            >
+              <MicIcon active={voiceActive} />
+              {voiceActive ? 'Listening' : 'Voice'}
+            </button>
+          )}
         </div>
 
         {/* Progress bar */}
@@ -165,8 +341,15 @@ export default function RecipeDetail({ recipe }) {
           <div className="h-full bg-rose-500 transition-all duration-500" style={{ width: `${progress}%` }} />
         </div>
 
+        {/* Voice command toast */}
+        {lastCommand && (
+          <div className="mx-5 mt-3 px-4 py-2 bg-stone-800 text-white text-xs rounded-full text-center animate-pulse">
+            ✦ {lastCommand}
+          </div>
+        )}
+
         {/* Step content */}
-        <div className="flex-1 overflow-y-auto px-6 pt-10 pb-6 flex flex-col gap-6">
+        <div className="flex-1 overflow-y-auto px-6 pt-8 pb-6 flex flex-col gap-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-rose-400 uppercase mb-3">
               Step {currentStep + 1}
@@ -186,12 +369,38 @@ export default function RecipeDetail({ recipe }) {
               ))}
             </div>
           )}
+
+          {/* Voice command cheatsheet */}
+          {voiceActive && (
+            <div className="mt-auto pt-4 border-t border-stone-200">
+              <p className="text-xs text-stone-400 mb-2 font-medium">Voice commands</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  ['"Next"', 'next step'],
+                  ['"Back"', 'previous step'],
+                  ['"Repeat"', 're-read step'],
+                  ['"Start timer"', 'start timer'],
+                ].map(([cmd, desc]) => (
+                  <div key={cmd} className="bg-white rounded-lg px-3 py-2 border border-stone-100">
+                    <p className="text-xs font-semibold text-stone-800">{cmd}</p>
+                    <p className="text-xs text-stone-400">{desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Navigation */}
         <div className="px-5 py-5 bg-white border-t border-stone-200 flex items-center justify-between gap-4">
           <button
-            onClick={() => setCurrentStep(s => Math.max(0, s - 1))}
+            onClick={() => {
+              setCurrentStep(s => {
+                const prev = Math.max(0, s - 1);
+                if (voiceActive) speak(steps[prev]);
+                return prev;
+              });
+            }}
             disabled={currentStep === 0}
             className="flex items-center gap-2 text-sm font-medium text-stone-600 disabled:opacity-25 px-4 py-2.5 rounded-full hover:bg-stone-100 transition"
           >
@@ -200,14 +409,29 @@ export default function RecipeDetail({ recipe }) {
 
           {isLast ? (
             <button
-              onClick={() => { setCookingMode(false); setCurrentStep(0); }}
+              onClick={() => {
+                setCookingMode(false);
+                setCurrentStep(0);
+                if (voiceActive) {
+                  voiceActiveRef.current = false;
+                  setVoiceActive(false);
+                  recognitionRef.current?.abort();
+                  speak("You're done! Enjoy your meal.");
+                }
+              }}
               className="flex items-center gap-2 text-sm font-semibold bg-emerald-600 text-white px-6 py-2.5 rounded-full hover:bg-emerald-700 transition"
             >
               Finished! 🎉
             </button>
           ) : (
             <button
-              onClick={() => setCurrentStep(s => s + 1)}
+              onClick={() => {
+                setCurrentStep(s => {
+                  const next = Math.min(totalSteps - 1, s + 1);
+                  if (voiceActive) speak(steps[next]);
+                  return next;
+                });
+              }}
               className="flex items-center gap-2 text-sm font-semibold bg-rose-600 text-white px-6 py-2.5 rounded-full hover:bg-rose-700 transition"
             >
               Next Step <ChevronRight />
@@ -222,7 +446,6 @@ export default function RecipeDetail({ recipe }) {
 
   return (
     <>
-      {/* Ingredients + serving scaler */}
       {recipe.ingredients?.length > 0 && (
         <section className="mt-8">
           <div className="flex items-center justify-between mb-3">
@@ -259,7 +482,6 @@ export default function RecipeDetail({ recipe }) {
         </section>
       )}
 
-      {/* Instructions */}
       {steps.length > 0 && (
         <section className="mt-8">
           <div className="flex items-center justify-between mb-4">
@@ -305,7 +527,6 @@ export default function RecipeDetail({ recipe }) {
         </section>
       )}
 
-      {/* Notes */}
       {recipe.notes?.length > 0 && (
         <section className="mt-8">
           <h2 className="text-base font-semibold text-stone-900 mb-3">Notes</h2>
