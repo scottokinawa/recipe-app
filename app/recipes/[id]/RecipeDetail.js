@@ -74,21 +74,18 @@ function getSpeechRecognition() {
 // ── Flavor role tags ───────────────────────────────────────────
 
 const ROLE_STYLES = {
-  UMAMI:   'bg-purple-100 text-purple-700',
-  SALTY:   'bg-blue-100 text-blue-700',
-  SWEET:   'bg-amber-100 text-amber-700',
-  AROMA:   'bg-teal-100 text-teal-700',
-  HEAT:    'bg-orange-100 text-orange-700',
-  COLOR:   'bg-emerald-100 text-emerald-700',
-  ACID:    'bg-lime-100 text-lime-700',
-  TEXTURE: 'bg-stone-100 text-stone-600',
-  DEPTH:   'bg-indigo-100 text-indigo-700',
+  UMAMI:   'bg-violet-50 text-violet-500',
+  SALTY:   'bg-sky-50 text-sky-500',
+  SWEET:   'bg-amber-50 text-amber-500',
+  AROMA:   'bg-teal-50 text-teal-500',
+  HEAT:    'bg-red-50 text-red-400',
+  GARNISH: 'bg-stone-100 text-stone-400',
 };
 
 function RoleTag({ role }) {
-  const cls = ROLE_STYLES[role] ?? 'bg-stone-100 text-stone-500';
+  const cls = ROLE_STYLES[role] ?? 'bg-stone-100 text-stone-400';
   return (
-    <span className={`inline-block text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded ${cls}`}>
+    <span className={`inline-block text-[10px] font-semibold tracking-widest uppercase px-1.5 py-px rounded-sm ${cls}`}>
       {role}
     </span>
   );
@@ -241,35 +238,29 @@ function IngredientRow({ ing, baseServings, servings }) {
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-stone-800">{ing.item}</span>
-            {ing.sub && (
-              <button
-                onClick={() => setSubOpen(o => !o)}
-                className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors ${
-                  subOpen
-                    ? 'bg-amber-200 text-amber-800'
-                    : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-                }`}
-              >
-                sub
-              </button>
-            )}
-          </div>
-          {ing.roles?.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {ing.roles.map(role => <RoleTag key={role} role={role} />)}
-            </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+          <span className="text-sm text-stone-800">{ing.item}</span>
+          {ing.roles?.map(role => <RoleTag key={role} role={role} />)}
+          {ing.sub && (
+            <button
+              onClick={() => setSubOpen(o => !o)}
+              className={`text-[10px] font-semibold tracking-widest uppercase px-1.5 py-px rounded-sm transition-colors ${
+                subOpen
+                  ? 'bg-stone-200 text-stone-600'
+                  : 'bg-stone-100 text-stone-400 hover:bg-stone-200 hover:text-stone-600'
+              }`}
+            >
+              sub
+            </button>
           )}
         </div>
-        <span className="text-sm font-medium text-stone-500 shrink-0 pt-0.5">
+        <span className="text-sm text-stone-400 shrink-0 tabular-nums">
           {scaleAmount(ing.amount, baseServings, servings)}
         </span>
       </div>
       {subOpen && ing.sub && (
-        <p className="mt-2 text-xs text-stone-600 leading-relaxed bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+        <p className="mt-1.5 ml-1 pl-3 border-l-2 border-stone-200 text-xs text-stone-400 leading-relaxed">
           {ing.sub}
         </p>
       )}
